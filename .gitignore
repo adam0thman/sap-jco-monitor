@@ -7,6 +7,8 @@ target/
 lib/*.so
 lib/*.dll
 lib/*.jnilib
+lib/*.dylib
+lib/*.jar
 destinations/*.jcoDestination
 !destinations/*.template
 
@@ -14,3 +16,6 @@ destinations/*.jcoDestination
 .idea/
 *.iml
 .vscode/
+
+# OS
+.DS_Store

@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.3.4";
+    private static final String VERSION = "1.3.6";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -227,79 +227,111 @@ public class SAPSystemMonitor {
     }
 
     // ==================== SM37 ====================
+    // Objective: count background jobs that ABORTED (status 'A') in the last 24h; > 10 = WARNING.
+    //   Primary  (Approach A): RFC_READ_TABLE on TBTCO with the column list trimmed (so the
+    //                          512-byte buffer is not exceeded) and STATUS/date pushed into the
+    //                          WHERE clause, so the returned row count IS the aborted-job count.
+    //   Fallback (Approach B): the XBP external-monitoring interface, which requires a stateful
+    //                          XMI session (BAPI_XMI_LOGON -> BAPI_XBP_JOB_SELECT -> BAPI_XMI_LOGOFF)
+    //                          held open via JCoContext.begin/end.
     private static int checkJobs(JCoDestination dest) {
         System.out.println(">>> [SM37] Background Jobs (Last 24h)");
-        String yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        DateTimeFormatter ymd = DateTimeFormatter.ofPattern("yyyyMMdd");
+        String fromDate = LocalDate.now().minusDays(1).format(ymd);
+        String toDate = LocalDate.now().format(ymd);
 
-        try {
-            JCoFunction fn = dest.getRepository().getFunction("BAPI_XBP_GET_JOB_LIST");
-            if (fn != null) {
-                System.out.println("    Primary Method         : BAPI_XBP_GET_JOB_LIST");
-                fn.getImportParameterList().setValue("JOBNAME", "*");
-                fn.getImportParameterList().setValue("USERNAME", "*");
-                fn.getImportParameterList().setValue("FROM_DATE", yesterday);
-                fn.execute(dest);
-                int failed = 0;
-                JCoTable jobs = fn.getTableParameterList().getTable("JOBLIST");
-                for (int i = 0; i < jobs.getNumRows(); i++) {
-                    jobs.setRow(i);
-                    String status = jobs.getString("STATUS");
-                    if ("A".equals(status) || "C".equals(status)) failed++;
-                }
-                System.out.println("    Primary Method Result  : " + failed + " failed/cancelled jobs");
-                System.out.println("    Fallback Method        : Not needed");
-                System.out.println("    Fallback Method Result : -");
-                System.out.println("    Threshold              : > 10 = WARNING");
-                String status = (failed > 10 ? "WARNING" : "OK");
-                System.out.println("    Status                 : " + status + "\n");
-                return failed > 10 ? EXIT_WARNING : EXIT_OK;
-            }
-        } catch (Exception ignored) {}
-
-        try {
-            JCoFunction fn = dest.getRepository().getFunction("BP_JOB_SELECT");
-            if (fn != null) {
-                System.out.println("    Primary Method         : BP_JOB_SELECT");
-                fn.getImportParameterList().setValue("JOBNAME", "*");
-                fn.getImportParameterList().setValue("USERNAME", "*");
-                fn.getImportParameterList().setValue("FROM_DATE", yesterday);
-                fn.execute(dest);
-                int failed = 0;
-                JCoTable jobs = fn.getTableParameterList().getTable("JOBLIST");
-                for (int i = 0; i < jobs.getNumRows(); i++) {
-                    jobs.setRow(i);
-                    String status = jobs.getString("STATUS");
-                    if ("A".equals(status) || "C".equals(status)) failed++;
-                }
-                System.out.println("    Primary Method Result  : " + failed + " failed/cancelled jobs");
-                System.out.println("    Fallback Method        : Not needed");
-                System.out.println("    Fallback Method Result : -");
-                System.out.println("    Threshold              : > 10 = WARNING");
-                String status = (failed > 10 ? "WARNING" : "OK");
-                System.out.println("    Status                 : " + status + "\n");
-                return failed > 10 ? EXIT_WARNING : EXIT_OK;
-            }
-        } catch (Exception ignored) {}
-
-        System.out.println("    Primary Method         : BAPI_XBP_GET_JOB_LIST / BP_JOB_SELECT");
-        System.out.println("    Primary Method Result  : Not available");
-        System.out.println("    Fallback Method        : RFC_READ_TABLE on TBTCO");
+        // ---- Approach A: direct TBTCO read (primary) ----
+        System.out.println("    Primary Method         : RFC_READ_TABLE on TBTCO (STATUS='A')");
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             fn.getImportParameterList().setValue("QUERY_TABLE", "TBTCO");
             fn.getImportParameterList().setValue("DELIMITER", "|");
-            fn.getImportParameterList().setValue("ROWCOUNT", 200);
+            JCoTable fields = fn.getTableParameterList().getTable("FIELDS");
+            for (String f : new String[] {"JOBNAME", "STATUS", "SDLSTRTDT", "ENDDATE"}) {
+                fields.appendRow();
+                fields.setValue("FIELDNAME", f);
+            }
+            JCoTable options = fn.getTableParameterList().getTable("OPTIONS");
+            options.appendRow();
+            options.setValue("TEXT", "STATUS = 'A'");
+            options.appendRow();
+            options.setValue("TEXT", "AND SDLSTRTDT >= '" + fromDate + "'");
             fn.execute(dest);
-            int count = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    Fallback Method Result : " + count + " jobs (sample)");
+            int aborted = fn.getTableParameterList().getTable("DATA").getNumRows();
+            System.out.println("    Primary Method Result  : " + aborted + " aborted jobs (since " + fromDate + ")");
+            System.out.println("    Fallback Method        : Not needed");
+            System.out.println("    Fallback Method Result : -");
             System.out.println("    Threshold              : > 10 = WARNING");
-            System.out.println("    Status                 : OK\n");
-            return EXIT_OK;
+            String status = (aborted > 10 ? "WARNING" : "OK");
+            System.out.println("    Status                 : " + status + "\n");
+            return aborted > 10 ? EXIT_WARNING : EXIT_OK;
+        } catch (Exception ignored) {
+            System.out.println("    Primary Method Result  : Not available");
+        }
+
+        // ---- Approach B: XBP via stateful XMI session (fallback) ----
+        System.out.println("    Fallback Method        : XBP BAPI_XBP_JOB_SELECT");
+        try {
+            int aborted = countAbortedJobsViaXbp(dest, fromDate, toDate);
+            System.out.println("    Fallback Method Result : " + aborted + " aborted jobs (since " + fromDate + ")");
+            System.out.println("    Threshold              : > 10 = WARNING");
+            String status = (aborted > 10 ? "WARNING" : "OK");
+            System.out.println("    Status                 : " + status + "\n");
+            return aborted > 10 ? EXIT_WARNING : EXIT_OK;
         } catch (Exception e) {
             System.out.println("    Fallback Method Result : Failed");
             System.out.println("    Threshold              : > 10 = WARNING");
             System.out.println("    Status                 : SKIPPED\n");
             return EXIT_OK;
+        }
+    }
+
+    // Approach B helper: open an XBP session and count jobs selected with the ABORTED flag.
+    // The XMI session must persist across the logon/select/logoff calls, so they are wrapped
+    // in JCoContext.begin/end to pin them to a single stateful connection.
+    private static int countAbortedJobsViaXbp(JCoDestination dest, String fromDate, String toDate) throws Exception {
+        JCoContext.begin(dest);
+        try {
+            JCoFunction logon = dest.getRepository().getFunction("BAPI_XMI_LOGON");
+            logon.getImportParameterList().setValue("EXTCOMPANY", "HERMES");
+            logon.getImportParameterList().setValue("EXTPRODUCT", "SAP_JCO_MONITOR");
+            logon.getImportParameterList().setValue("INTERFACE", "XBP");
+            logon.getImportParameterList().setValue("VERSION", "3.0");
+            logon.execute(dest);
+            assertBapiOk(logon);
+
+            JCoFunction sel = dest.getRepository().getFunction("BAPI_XBP_JOB_SELECT");
+            sel.getImportParameterList().setValue("EXTERNAL_USER_NAME", dest.getAttributes().getUser());
+            JCoStructure p = sel.getImportParameterList().getStructure("JOB_SELECT_PARAM");
+            p.setValue("JOBNAME", "*");
+            p.setValue("USERNAME", "*");
+            p.setValue("FROM_DATE", fromDate);
+            p.setValue("TO_DATE", toDate);
+            p.setValue("ABORTED", "X");   // select only aborted jobs
+            sel.execute(dest);
+            assertBapiOk(sel);
+            int aborted = sel.getTableParameterList().getTable("JOB_HEAD").getNumRows();
+
+            try {
+                JCoFunction logoff = dest.getRepository().getFunction("BAPI_XMI_LOGOFF");
+                logoff.getImportParameterList().setValue("INTERFACE", "XBP");
+                logoff.execute(dest);
+            } catch (Exception ignored) {}
+
+            return aborted;
+        } finally {
+            JCoContext.end(dest);
+        }
+    }
+
+    // Throw if a BAPI's RETURN structure reports an error/abort, so the caller can fall through.
+    private static void assertBapiOk(JCoFunction fn) {
+        JCoStructure ret = fn.getExportParameterList().getStructure("RETURN");
+        if (ret != null) {
+            String type = ret.getString("TYPE");
+            if ("E".equals(type) || "A".equals(type)) {
+                throw new RuntimeException(fn.getName() + ": " + ret.getString("MESSAGE"));
+            }
         }
     }
 
@@ -322,18 +354,20 @@ public class SAPSystemMonitor {
                 if (dumpTable == null) try { dumpTable = fn.getTableParameterList().getTable("IT_DUMPS"); } catch (Exception ignored) {}
 
                 if (dumpTable != null && dumpTable.getNumRows() > 0) {
-                    System.out.println("    Primary Method Result  : " + dumpTable.getNumRows() + " dumps found");
+                    int rows = dumpTable.getNumRows();
+                    String status = rows > 50 ? "CRITICAL" : (rows > 10 ? "WARNING" : "OK");
+                    System.out.println("    Primary Method Result  : " + rows + " dumps found");
                     System.out.println("    Fallback Method        : Not needed");
                     System.out.println("    Fallback Method Result : -");
                     System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
-                    System.out.println("    Status                 : OK");
+                    System.out.println("    Status                 : " + status);
                     System.out.println("    --------------------------------------------------");
 
                     // Print all available fields dynamically
                     JCoRecordMetaData meta = dumpTable.getRecordMetaData();
                     int fieldCount = meta.getFieldCount();
 
-                    for (int i = 0; i < Math.min(dumpTable.getNumRows(), 10); i++) {
+                    for (int i = 0; i < Math.min(rows, 10); i++) {
                         dumpTable.setRow(i);
                         StringBuilder line = new StringBuilder("    ");
                         for (int f = 0; f < fieldCount; f++) {
@@ -344,18 +378,22 @@ public class SAPSystemMonitor {
                         }
                         System.out.println(line.toString());
                     }
-                    if (dumpTable.getNumRows() > 10) {
-                        System.out.println("    ... (" + (dumpTable.getNumRows() - 10) + " more)");
+                    if (rows > 10) {
+                        System.out.println("    ... (" + (rows - 10) + " more)");
                     }
                     System.out.println("    --------------------------------------------------\n");
+
+                    if (rows > 50) return EXIT_CRITICAL;
+                    if (rows > 10) return EXIT_WARNING;
+                    return EXIT_OK;
                 } else {
                     System.out.println("    Primary Method Result  : No dumps returned");
                     System.out.println("    Fallback Method        : Not needed");
                     System.out.println("    Fallback Method Result : -");
                     System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
                     System.out.println("    Status                 : OK\n");
+                    return EXIT_OK;
                 }
-                return EXIT_OK;
             }
         } catch (Exception ignored) {}
 
@@ -381,14 +419,6 @@ public class SAPSystemMonitor {
             System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
             System.out.println("    Status                 : SKIPPED\n");
             return EXIT_OK;
-        }
-    }
-
-    private static String safeGet(JCoTable table, String field) {
-        try {
-            return table.getString(field);
-        } catch (Exception e) {
-            return "-";
         }
     }
 
