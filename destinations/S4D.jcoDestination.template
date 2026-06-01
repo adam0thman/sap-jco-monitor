@@ -1,0 +1,32 @@
+# SAP JCo Destination template
+#
+# Copy this file to "<DEST>.jcoDestination" (e.g. S4D.jcoDestination) and fill
+# in real values. The real .jcoDestination files are git-ignored so credentials
+# are never committed.
+#
+#   cp destinations/S4D.jcoDestination.template destinations/S4D.jcoDestination
+
+# Application server host (hostname or IP of the SAP message/app server)
+jco.client.ashost=your-sap-host
+
+# System number (two digits, e.g. 00)
+jco.client.sysnr=00
+
+# Client (mandant), e.g. 100
+jco.client.client=100
+
+# RFC user with monitoring authorizations
+jco.client.user=MONITOR_USER
+
+# Password for the RFC user
+jco.client.passwd=changeme
+
+# Logon language (EN, DE, ...)
+jco.client.lang=EN
+
+# Connection pool sizing
+jco.client.pool_capacity=3
+jco.client.peak_limit=10
+
+# Optional: SAProuter string if connecting through one
+# jco.client.saprouter=/H/saprouter-host/S/3299

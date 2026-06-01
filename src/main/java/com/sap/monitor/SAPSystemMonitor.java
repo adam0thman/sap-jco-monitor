@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.3.4";
+    private static final String VERSION = "1.3.5";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -322,18 +322,20 @@ public class SAPSystemMonitor {
                 if (dumpTable == null) try { dumpTable = fn.getTableParameterList().getTable("IT_DUMPS"); } catch (Exception ignored) {}
 
                 if (dumpTable != null && dumpTable.getNumRows() > 0) {
-                    System.out.println("    Primary Method Result  : " + dumpTable.getNumRows() + " dumps found");
+                    int rows = dumpTable.getNumRows();
+                    String status = rows > 50 ? "CRITICAL" : (rows > 10 ? "WARNING" : "OK");
+                    System.out.println("    Primary Method Result  : " + rows + " dumps found");
                     System.out.println("    Fallback Method        : Not needed");
                     System.out.println("    Fallback Method Result : -");
                     System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
-                    System.out.println("    Status                 : OK");
+                    System.out.println("    Status                 : " + status);
                     System.out.println("    --------------------------------------------------");
 
                     // Print all available fields dynamically
                     JCoRecordMetaData meta = dumpTable.getRecordMetaData();
                     int fieldCount = meta.getFieldCount();
 
-                    for (int i = 0; i < Math.min(dumpTable.getNumRows(), 10); i++) {
+                    for (int i = 0; i < Math.min(rows, 10); i++) {
                         dumpTable.setRow(i);
                         StringBuilder line = new StringBuilder("    ");
                         for (int f = 0; f < fieldCount; f++) {
@@ -344,18 +346,22 @@ public class SAPSystemMonitor {
                         }
                         System.out.println(line.toString());
                     }
-                    if (dumpTable.getNumRows() > 10) {
-                        System.out.println("    ... (" + (dumpTable.getNumRows() - 10) + " more)");
+                    if (rows > 10) {
+                        System.out.println("    ... (" + (rows - 10) + " more)");
                     }
                     System.out.println("    --------------------------------------------------\n");
+
+                    if (rows > 50) return EXIT_CRITICAL;
+                    if (rows > 10) return EXIT_WARNING;
+                    return EXIT_OK;
                 } else {
                     System.out.println("    Primary Method Result  : No dumps returned");
                     System.out.println("    Fallback Method        : Not needed");
                     System.out.println("    Fallback Method Result : -");
                     System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
                     System.out.println("    Status                 : OK\n");
+                    return EXIT_OK;
                 }
-                return EXIT_OK;
             }
         } catch (Exception ignored) {}
 
@@ -381,14 +387,6 @@ public class SAPSystemMonitor {
             System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
             System.out.println("    Status                 : SKIPPED\n");
             return EXIT_OK;
-        }
-    }
-
-    private static String safeGet(JCoTable table, String field) {
-        try {
-            return table.getString(field);
-        } catch (Exception e) {
-            return "-";
         }
     }
 

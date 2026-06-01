@@ -12,8 +12,7 @@ Automated RFC-based monitoring for S/4HANA, BW, and ECC systems covering:
 - Application server status (SM51)
 - Background jobs (SM37)
 - Short dumps (ST22)
-- Logon group response times (SMLG)
-- Database space / log sync (DB02)
+- Logon groups (SMLG)
 
 Exit codes: 0=OK, 1=Warning, 2=Critical (ideal for cron + alerting)
 
@@ -30,8 +29,8 @@ sap-jco-monitor/
 ├── src/main/java/com/sap/monitor/SAPSystemMonitor.java
 ├── lib/sapjco3.jar          # Add your JCo jar here
 ├── destinations/
-│   ├── S4D.jcoDestination
-│   └── ...
+│   ├── S4D.jcoDestination.template   # Committed; copy to S4D.jcoDestination
+│   └── S4D.jcoDestination            # Your real creds (git-ignored)
 ├── README.md
 └── .gitignore
 ```

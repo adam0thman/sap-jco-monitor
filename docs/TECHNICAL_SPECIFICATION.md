@@ -1,6 +1,6 @@
 # SAP JCo Monitor - Technical Specification
 
-**Version:** 1.3.4  
+**Version:** 1.3.5  
 **Date:** 2026-06-01  
 **Author:** Hermes Agent
 
@@ -31,7 +31,7 @@ Every monitoring check follows this consistent structure:
 
 ---
 
-## 2. Monitoring Checks - Final Implementation (v1.3.4)
+## 2. Monitoring Checks - Final Implementation (v1.3.5)
 
 ### 2.1 SM12 - Lock Entries
 **Primary:** `ENQUEUE_READ`  
@@ -74,6 +74,7 @@ Every monitoring check follows this consistent structure:
 
 | Version | Changes |
 |---------|---------|
+| 1.3.5   | ST22 primary path now applies WARNING/CRITICAL thresholds (was hardcoded OK); removed dead `safeGet` helper; added `S4D.jcoDestination.template`; README aligned with implemented checks |
 | 1.3.4   | ST22 now dynamically prints all fields from `ET_E2E_LOG` |
 | 1.3.3   | Added `ET_E2E_LOG` support for `/SDF/GET_DUMP_LOG` |
 | 1.3.2   | Added `BP_JOB_SELECT` as second primary option for SM37 |
