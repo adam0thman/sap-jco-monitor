@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.3.0";
+    private static final String VERSION = "1.3.1";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -229,17 +229,16 @@ public class SAPSystemMonitor {
         return EXIT_OK;
     }
 
-    // ==================== SM37 ====================
+    // ==================== SM37 (Updated with BP_JOB_SELECT) ====================
     private static int checkJobs(JCoDestination dest) {
         System.out.println(">>> [SM37] Background Jobs (Last 24h)");
-        String primary = "BAPI_XBP_GET_JOB_LIST";
-        String fallback = "RFC_READ_TABLE on TBTCO";
         String yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
 
+        // Primary 1: BAPI_XBP_GET_JOB_LIST
         try {
             JCoFunction fn = dest.getRepository().getFunction("BAPI_XBP_GET_JOB_LIST");
             if (fn != null) {
-                System.out.println("    Primary Method         : " + primary);
+                System.out.println("    Primary Method         : BAPI_XBP_GET_JOB_LIST");
                 fn.getImportParameterList().setValue("JOBNAME", "*");
                 fn.getImportParameterList().setValue("USERNAME", "*");
                 fn.getImportParameterList().setValue("FROM_DATE", yesterday);
@@ -261,9 +260,36 @@ public class SAPSystemMonitor {
             }
         } catch (Exception ignored) {}
 
-        System.out.println("    Primary Method         : " + primary);
+        // Primary 2: BP_JOB_SELECT
+        try {
+            JCoFunction fn = dest.getRepository().getFunction("BP_JOB_SELECT");
+            if (fn != null) {
+                System.out.println("    Primary Method         : BP_JOB_SELECT");
+                fn.getImportParameterList().setValue("JOBNAME", "*");
+                fn.getImportParameterList().setValue("USERNAME", "*");
+                fn.getImportParameterList().setValue("FROM_DATE", yesterday);
+                fn.execute(dest);
+                int failed = 0;
+                JCoTable jobs = fn.getTableParameterList().getTable("JOBLIST");
+                for (int i = 0; i < jobs.getNumRows(); i++) {
+                    jobs.setRow(i);
+                    String status = jobs.getString("STATUS");
+                    if ("A".equals(status) || "C".equals(status)) failed++;
+                }
+                System.out.println("    Primary Method Result  : " + failed + " failed/cancelled jobs");
+                System.out.println("    Fallback Method        : Not needed");
+                System.out.println("    Fallback Method Result : -");
+                System.out.println("    Threshold              : > 10 = WARNING");
+                String status = (failed > 10 ? "WARNING" : "OK");
+                System.out.println("    Status                 : " + status + "\n");
+                return failed > 10 ? EXIT_WARNING : EXIT_OK;
+            }
+        } catch (Exception ignored) {}
+
+        // Fallback: RFC_READ_TABLE on TBTCO
+        System.out.println("    Primary Method         : BAPI_XBP_GET_JOB_LIST / BP_JOB_SELECT");
         System.out.println("    Primary Method Result  : Not available");
-        System.out.println("    Fallback Method        : " + fallback);
+        System.out.println("    Fallback Method        : RFC_READ_TABLE on TBTCO");
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             fn.getImportParameterList().setValue("QUERY_TABLE", "TBTCO");
