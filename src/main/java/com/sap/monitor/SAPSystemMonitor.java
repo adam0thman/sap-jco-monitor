@@ -6,10 +6,11 @@ import java.nio.file.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.2.0";
+    private static final String VERSION = "1.2.1";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -28,11 +29,13 @@ public class SAPSystemMonitor {
             JCoAttributes attrs = dest.getAttributes();
 
             // === CORPORATE HEADER ===
+            String ashost = getAshostFromDestination(destinationName);
+
             System.out.println("==============================================================");
             System.out.println("  SAP System Monitor v" + VERSION);
             System.out.println("  Run Date     : " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
             System.out.println("  Destination  : " + destinationName);
-            System.out.println("  ASHOST       : " + attrs.getHost());
+            System.out.println("  ASHOST       : " + ashost);
             System.out.println("  SYSID        : " + attrs.getSystemID());
             System.out.println("  Client       : " + attrs.getClient());
             System.out.println("  User         : " + attrs.getUser());
@@ -65,6 +68,21 @@ public class SAPSystemMonitor {
             System.setProperty("jco.destinations.dir", "destinations");
         }
         return JCoDestinationManager.getDestination(destName);
+    }
+
+    // Read real ASHOST from the .jcoDestination file
+    private static String getAshostFromDestination(String destName) {
+        try {
+            Path destFile = Paths.get("destinations", destName + ".jcoDestination");
+            if (Files.exists(destFile)) {
+                Properties props = new Properties();
+                try (InputStream in = Files.newInputStream(destFile)) {
+                    props.load(in);
+                }
+                return props.getProperty("jco.client.ashost", "unknown");
+            }
+        } catch (Exception ignored) {}
+        return "unknown";
     }
 
     // ==================== SM12 ====================
