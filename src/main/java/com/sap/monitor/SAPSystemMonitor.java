@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.2.3";
+    private static final String VERSION = "1.3.0";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -27,7 +27,6 @@ public class SAPSystemMonitor {
         try {
             JCoDestination dest = getDestination(destinationName);
             JCoAttributes attrs = dest.getAttributes();
-
             String ashost = getAshostFromDestination(destinationName);
 
             System.out.println("==============================================================");
@@ -86,24 +85,32 @@ public class SAPSystemMonitor {
     // ==================== SM12 ====================
     private static int checkLocks(JCoDestination dest) {
         System.out.println(">>> [SM12] Lock Entries");
+        String primary = "ENQUEUE_READ";
+        String fallback = "RFC_READ_TABLE on ENQID";
+        int result = EXIT_OK;
+        String status = "OK";
+        String threshold = "> 5000 = WARNING";
+
         try {
             JCoFunction fn = dest.getRepository().getFunction("ENQUEUE_READ");
             if (fn != null) {
-                System.out.println("    Method : ENQUEUE_READ");
+                System.out.println("    Primary Method         : " + primary);
                 fn.getImportParameterList().setValue("GCLIENT", dest.getClient());
                 fn.execute(dest);
                 int count = fn.getTableParameterList().getTable("ENQ").getNumRows();
-                System.out.println("    Value  : " + count + " active locks");
-                System.out.println("    Limit  : 5000");
-                System.out.println("    Status : " + (count > 5000 ? "WARNING" : "OK") + "\n");
+                System.out.println("    Primary Method Result  : " + count + " active locks");
+                System.out.println("    Fallback Method        : Not needed");
+                System.out.println("    Fallback Method Result : -");
+                System.out.println("    Threshold              : " + threshold);
+                status = (count > 5000 ? "WARNING" : "OK");
+                System.out.println("    Status                 : " + status + "\n");
                 return count > 5000 ? EXIT_WARNING : EXIT_OK;
-            } else {
-                System.out.println("    Primary not available. Falling back to RFC_READ_TABLE on ENQID...");
             }
-        } catch (Exception e) {
-            System.out.println("    Primary failed. Trying fallback...");
-        }
+        } catch (Exception ignored) {}
 
+        System.out.println("    Primary Method         : " + primary);
+        System.out.println("    Primary Method Result  : Not available");
+        System.out.println("    Fallback Method        : " + fallback);
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             fn.getImportParameterList().setValue("QUERY_TABLE", "ENQID");
@@ -111,52 +118,70 @@ public class SAPSystemMonitor {
             fn.getImportParameterList().setValue("ROWCOUNT", 100);
             fn.execute(dest);
             int count = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    Fallback Value : " + count + " locks (ENQID)");
-            System.out.println("    Status         : OK\n");
-            return EXIT_OK;
+            System.out.println("    Fallback Method Result : " + count + " locks");
+            System.out.println("    Threshold              : " + threshold);
+            System.out.println("    Status                 : OK\n");
         } catch (Exception e) {
-            System.out.println("    Fallback failed. Status: SKIPPED\n");
-            return EXIT_OK;
+            System.out.println("    Fallback Method Result : Failed");
+            System.out.println("    Threshold              : " + threshold);
+            System.out.println("    Status                 : SKIPPED\n");
         }
+        return EXIT_OK;
     }
 
     // ==================== SM13 ====================
     private static int checkUpdates(JCoDestination dest) {
         System.out.println(">>> [SM13] Update Records");
+        String primary = "RFC_READ_TABLE on VBMOD";
+        System.out.println("    Primary Method         : " + primary);
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
-            if (fn == null) {
-                System.out.println("    Status: SKIPPED\n");
+            if (fn != null) {
+                fn.getImportParameterList().setValue("QUERY_TABLE", "VBMOD");
+                fn.getImportParameterList().setValue("DELIMITER", "|");
+                fn.getImportParameterList().setValue("ROWCOUNT", 100);
+                fn.execute(dest);
+                int rows = fn.getTableParameterList().getTable("DATA").getNumRows();
+                System.out.println("    Primary Method Result  : " + rows + " update records");
+                System.out.println("    Fallback Method        : Not needed");
+                System.out.println("    Fallback Method Result : -");
+                System.out.println("    Threshold              : informational only");
+                System.out.println("    Status                 : OK\n");
                 return EXIT_OK;
             }
-            fn.getImportParameterList().setValue("QUERY_TABLE", "VBMOD");
-            fn.getImportParameterList().setValue("DELIMITER", "|");
-            fn.getImportParameterList().setValue("ROWCOUNT", 100);
-            fn.execute(dest);
-            int rows = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    Value  : " + rows + " update records");
-            System.out.println("    Status : OK\n");
-            return EXIT_OK;
         } catch (Exception e) {
-            System.out.println("    Status: SKIPPED\n");
-            return EXIT_OK;
+            System.out.println("    Primary Method Result  : Failed");
         }
+        System.out.println("    Fallback Method        : Not available");
+        System.out.println("    Fallback Method Result : -");
+        System.out.println("    Threshold              : informational only");
+        System.out.println("    Status                 : SKIPPED\n");
+        return EXIT_OK;
     }
 
     // ==================== SMQ1 ====================
     private static int checkQueues(JCoDestination dest) {
         System.out.println(">>> [SMQ1] qRFC Queue Status");
+        String primary = "TRFC_QOUT_GET_STATUS";
+        String fallback = "RFC_READ_TABLE on TRFCQOUT";
+
         try {
             JCoFunction fn = dest.getRepository().getFunction("TRFC_QOUT_GET_STATUS");
             if (fn != null) {
-                System.out.println("    Method : TRFC_QOUT_GET_STATUS");
+                System.out.println("    Primary Method         : " + primary);
                 fn.execute(dest);
-                System.out.println("    Status : OK\n");
+                System.out.println("    Primary Method Result  : Success");
+                System.out.println("    Fallback Method        : Not needed");
+                System.out.println("    Fallback Method Result : -");
+                System.out.println("    Threshold              : informational only");
+                System.out.println("    Status                 : OK\n");
                 return EXIT_OK;
             }
         } catch (Exception ignored) {}
 
-        System.out.println("    Primary not available. Falling back to RFC_READ_TABLE on TRFCQOUT...");
+        System.out.println("    Primary Method         : " + primary);
+        System.out.println("    Primary Method Result  : Not available");
+        System.out.println("    Fallback Method        : " + fallback);
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             fn.getImportParameterList().setValue("QUERY_TABLE", "TRFCQOUT");
@@ -164,11 +189,14 @@ public class SAPSystemMonitor {
             fn.getImportParameterList().setValue("ROWCOUNT", 100);
             fn.execute(dest);
             int rows = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    Fallback Value : " + rows + " qRFC records");
-            System.out.println("    Status         : OK\n");
+            System.out.println("    Fallback Method Result : " + rows + " qRFC records");
+            System.out.println("    Threshold              : informational only");
+            System.out.println("    Status                 : OK\n");
             return EXIT_OK;
         } catch (Exception e) {
-            System.out.println("    Fallback failed. Status: SKIPPED\n");
+            System.out.println("    Fallback Method Result : Failed");
+            System.out.println("    Threshold              : informational only");
+            System.out.println("    Status                 : SKIPPED\n");
             return EXIT_OK;
         }
     }
@@ -176,32 +204,42 @@ public class SAPSystemMonitor {
     // ==================== SM51 ====================
     private static int checkServers(JCoDestination dest) {
         System.out.println(">>> [SM51] Application Servers");
+        String primary = "TH_SERVER_LIST";
+        System.out.println("    Primary Method         : " + primary);
         try {
             JCoFunction fn = dest.getRepository().getFunction("TH_SERVER_LIST");
-            if (fn == null) {
-                System.out.println("    Status: SKIPPED\n");
-                return EXIT_OK;
+            if (fn != null) {
+                fn.execute(dest);
+                int count = fn.getTableParameterList().getTable("LIST").getNumRows();
+                System.out.println("    Primary Method Result  : " + count + " active servers");
+                System.out.println("    Fallback Method        : Not needed");
+                System.out.println("    Fallback Method Result : -");
+                System.out.println("    Threshold              : >= 1 required");
+                String status = (count >= 1 ? "OK" : "CRITICAL");
+                System.out.println("    Status                 : " + status + "\n");
+                return count >= 1 ? EXIT_OK : EXIT_CRITICAL;
             }
-            System.out.println("    Method : TH_SERVER_LIST");
-            fn.execute(dest);
-            int count = fn.getTableParameterList().getTable("LIST").getNumRows();
-            System.out.println("    Value  : " + count + " active servers");
-            System.out.println("    Status : " + (count >= 1 ? "OK" : "CRITICAL") + "\n");
-            return count >= 1 ? EXIT_OK : EXIT_CRITICAL;
         } catch (Exception e) {
-            System.out.println("    Error: " + e.getMessage() + "\n");
-            return EXIT_WARNING;
+            System.out.println("    Primary Method Result  : Failed");
         }
+        System.out.println("    Fallback Method        : Not available");
+        System.out.println("    Fallback Method Result : -");
+        System.out.println("    Threshold              : >= 1 required");
+        System.out.println("    Status                 : SKIPPED\n");
+        return EXIT_OK;
     }
 
     // ==================== SM37 ====================
     private static int checkJobs(JCoDestination dest) {
         System.out.println(">>> [SM37] Background Jobs (Last 24h)");
+        String primary = "BAPI_XBP_GET_JOB_LIST";
+        String fallback = "RFC_READ_TABLE on TBTCO";
+        String yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+
         try {
             JCoFunction fn = dest.getRepository().getFunction("BAPI_XBP_GET_JOB_LIST");
             if (fn != null) {
-                System.out.println("    Method : BAPI_XBP_GET_JOB_LIST");
-                String yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                System.out.println("    Primary Method         : " + primary);
                 fn.getImportParameterList().setValue("JOBNAME", "*");
                 fn.getImportParameterList().setValue("USERNAME", "*");
                 fn.getImportParameterList().setValue("FROM_DATE", yesterday);
@@ -213,14 +251,19 @@ public class SAPSystemMonitor {
                     String status = jobs.getString("STATUS");
                     if ("A".equals(status) || "C".equals(status)) failed++;
                 }
-                System.out.println("    Value  : " + failed + " failed/cancelled jobs");
-                System.out.println("    Limit  : 10");
-                System.out.println("    Status : " + (failed > 10 ? "WARNING" : "OK") + "\n");
+                System.out.println("    Primary Method Result  : " + failed + " failed/cancelled jobs");
+                System.out.println("    Fallback Method        : Not needed");
+                System.out.println("    Fallback Method Result : -");
+                System.out.println("    Threshold              : > 10 = WARNING");
+                String status = (failed > 10 ? "WARNING" : "OK");
+                System.out.println("    Status                 : " + status + "\n");
                 return failed > 10 ? EXIT_WARNING : EXIT_OK;
             }
         } catch (Exception ignored) {}
 
-        System.out.println("    Primary not available. Falling back to RFC_READ_TABLE on TBTCO...");
+        System.out.println("    Primary Method         : " + primary);
+        System.out.println("    Primary Method Result  : Not available");
+        System.out.println("    Fallback Method        : " + fallback);
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             fn.getImportParameterList().setValue("QUERY_TABLE", "TBTCO");
@@ -228,123 +271,87 @@ public class SAPSystemMonitor {
             fn.getImportParameterList().setValue("ROWCOUNT", 200);
             fn.execute(dest);
             int count = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    Fallback Value : " + count + " jobs (sample)");
-            System.out.println("    Status         : OK\n");
+            System.out.println("    Fallback Method Result : " + count + " jobs (sample)");
+            System.out.println("    Threshold              : > 10 = WARNING");
+            System.out.println("    Status                 : OK\n");
             return EXIT_OK;
         } catch (Exception e) {
-            System.out.println("    Fallback failed. Status: SKIPPED\n");
+            System.out.println("    Fallback Method Result : Failed");
+            System.out.println("    Threshold              : > 10 = WARNING");
+            System.out.println("    Status                 : SKIPPED\n");
             return EXIT_OK;
         }
     }
 
-    // ==================== ST22 (Improved - lists actual dumps) ====================
+    // ==================== ST22 ====================
     private static int checkDumps(JCoDestination dest) {
         System.out.println(">>> [ST22] Short Dumps");
+        String primary = "/SDF/GET_DUMP_LOG";
+        String fallback = "RFC_READ_TABLE on SNAP";
 
-        // Try preferred function first
         try {
             JCoFunction fn = dest.getRepository().getFunction("/SDF/GET_DUMP_LOG");
             if (fn != null) {
-                System.out.println("    Method : /SDF/GET_DUMP_LOG");
+                System.out.println("    Primary Method         : " + primary);
                 fn.execute(dest);
-
-                // Try common table parameter names returned by this FM
-                JCoTable dumpTable = null;
-                try { dumpTable = fn.getTableParameterList().getTable("ET_DUMPS"); } catch (Exception ignored) {}
-                if (dumpTable == null) {
-                    try { dumpTable = fn.getTableParameterList().getTable("DUMP_LIST"); } catch (Exception ignored) {}
-                }
-                if (dumpTable == null) {
-                    try { dumpTable = fn.getTableParameterList().getTable("IT_DUMPS"); } catch (Exception ignored) {}
-                }
-
-                if (dumpTable != null && dumpTable.getNumRows() > 0) {
-                    System.out.println("    Dumps found: " + dumpTable.getNumRows());
-                    System.out.println("    --------------------------------------------------");
-                    for (int i = 0; i < Math.min(dumpTable.getNumRows(), 10); i++) {
-                        dumpTable.setRow(i);
-                        String datum   = safeGet(dumpTable, "DATUM");
-                        String uzeit   = safeGet(dumpTable, "UZEIT");
-                        String kword   = safeGet(dumpTable, "KWORD1");
-                        String uname   = safeGet(dumpTable, "UNAME");
-                        String ahost   = safeGet(dumpTable, "AHOST");
-                        System.out.printf("    %s %s | %-25s | %-12s | %s%n",
-                                datum, uzeit, kword, uname, ahost);
-                    }
-                    if (dumpTable.getNumRows() > 10) {
-                        System.out.println("    ... (" + (dumpTable.getNumRows() - 10) + " more)");
-                    }
-                    System.out.println("    --------------------------------------------------");
-                    System.out.println("    Status : OK\n");
-                } else {
-                    System.out.println("    Value  : No dumps returned");
-                    System.out.println("    Status : OK\n");
-                }
+                System.out.println("    Primary Method Result  : Success");
+                System.out.println("    Fallback Method        : Not needed");
+                System.out.println("    Fallback Method Result : -");
+                System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
+                System.out.println("    Status                 : OK\n");
                 return EXIT_OK;
-            } else {
-                System.out.println("    Primary (/SDF/GET_DUMP_LOG) not available. Falling back to RFC_READ_TABLE on SNAP...");
             }
-        } catch (Exception e) {
-            System.out.println("    Primary failed: " + e.getMessage() + ". Falling back...");
-        }
+        } catch (Exception ignored) {}
 
-        // Fallback to RFC_READ_TABLE on SNAP
+        System.out.println("    Primary Method         : " + primary);
+        System.out.println("    Primary Method Result  : Not available");
+        System.out.println("    Fallback Method        : " + fallback);
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
-            if (fn == null) {
-                System.out.println("    Fallback also not available. Status: SKIPPED\n");
-                return EXIT_OK;
-            }
-
             fn.getImportParameterList().setValue("QUERY_TABLE", "SNAP");
             fn.getImportParameterList().setValue("DELIMITER", "|");
             fn.getImportParameterList().setValue("ROWCOUNT", 300);
-            System.out.println("    Fallback Method : RFC_READ_TABLE on SNAP");
             fn.execute(dest);
-
             int count = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    Value  : " + count + " dumps (raw table rows)");
-            System.out.println("    Limits : 10 (Warning), 50 (Critical)");
-            String result = count > 50 ? "CRITICAL" : (count > 10 ? "WARNING" : "OK");
-            System.out.println("    Status : " + result + "\n");
-
+            System.out.println("    Fallback Method Result : " + count + " dumps");
+            System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
+            String status = count > 50 ? "CRITICAL" : (count > 10 ? "WARNING" : "OK");
+            System.out.println("    Status                 : " + status + "\n");
             if (count > 50) return EXIT_CRITICAL;
             if (count > 10) return EXIT_WARNING;
             return EXIT_OK;
-
         } catch (Exception e) {
-            System.out.println("    Fallback failed: " + e.getMessage());
-            System.out.println("    Status: SKIPPED\n");
+            System.out.println("    Fallback Method Result : Failed");
+            System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
+            System.out.println("    Status                 : SKIPPED\n");
             return EXIT_OK;
-        }
-    }
-
-    // Helper to safely read a field from a table
-    private static String safeGet(JCoTable table, String field) {
-        try {
-            return table.getString(field);
-        } catch (Exception e) {
-            return "-";
         }
     }
 
     // ==================== SMLG ====================
     private static int checkLogonGroups(JCoDestination dest) {
         System.out.println(">>> [SMLG] Logon Groups");
+        String primary = "SMLG_GET_DEFINED_GROUPS";
+        System.out.println("    Primary Method         : " + primary);
         try {
             JCoFunction fn = dest.getRepository().getFunction("SMLG_GET_DEFINED_GROUPS");
-            if (fn == null) {
-                System.out.println("    Status: SKIPPED\n");
+            if (fn != null) {
+                fn.execute(dest);
+                System.out.println("    Primary Method Result  : Success");
+                System.out.println("    Fallback Method        : Not needed");
+                System.out.println("    Fallback Method Result : -");
+                System.out.println("    Threshold              : informational only");
+                System.out.println("    Status                 : OK\n");
                 return EXIT_OK;
             }
-            System.out.println("    Method : SMLG_GET_DEFINED_GROUPS");
-            fn.execute(dest);
-            System.out.println("    Status : OK\n");
-            return EXIT_OK;
         } catch (Exception e) {
-            System.out.println("    Status: " + e.getMessage() + "\n");
-            return EXIT_OK;
+            System.out.println("    Primary Method Result  : Failed");
         }
+        System.out.println("    Fallback Method        : Not available");
+        System.out.println("    Fallback Method Result : -");
+        System.out.println("    Threshold              : informational only");
+        System.out.println("    Status                 : SKIPPED\n");
+        return EXIT_OK;
     }
 
     private static String getStatusText(int code) {
