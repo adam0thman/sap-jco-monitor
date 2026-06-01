@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.3.2";
+    private static final String VERSION = "1.3.3";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -303,7 +303,7 @@ public class SAPSystemMonitor {
         }
     }
 
-    // ==================== ST22 (Improved - prints actual dumps) ====================
+    // ==================== ST22 (Fixed - uses ET_E2E_LOG) ====================
     private static int checkDumps(JCoDestination dest) {
         System.out.println(">>> [ST22] Short Dumps");
         String primary = "/SDF/GET_DUMP_LOG";
@@ -316,7 +316,8 @@ public class SAPSystemMonitor {
                 fn.execute(dest);
 
                 JCoTable dumpTable = null;
-                try { dumpTable = fn.getTableParameterList().getTable("ET_DUMPS"); } catch (Exception ignored) {}
+                try { dumpTable = fn.getTableParameterList().getTable("ET_E2E_LOG"); } catch (Exception ignored) {}
+                if (dumpTable == null) try { dumpTable = fn.getTableParameterList().getTable("ET_DUMPS"); } catch (Exception ignored) {}
                 if (dumpTable == null) try { dumpTable = fn.getTableParameterList().getTable("DUMP_LIST"); } catch (Exception ignored) {}
                 if (dumpTable == null) try { dumpTable = fn.getTableParameterList().getTable("IT_DUMPS"); } catch (Exception ignored) {}
 
