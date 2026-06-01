@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.3.1";
+    private static final String VERSION = "1.3.2";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -87,9 +87,6 @@ public class SAPSystemMonitor {
         System.out.println(">>> [SM12] Lock Entries");
         String primary = "ENQUEUE_READ";
         String fallback = "RFC_READ_TABLE on ENQID";
-        int result = EXIT_OK;
-        String status = "OK";
-        String threshold = "> 5000 = WARNING";
 
         try {
             JCoFunction fn = dest.getRepository().getFunction("ENQUEUE_READ");
@@ -101,8 +98,8 @@ public class SAPSystemMonitor {
                 System.out.println("    Primary Method Result  : " + count + " active locks");
                 System.out.println("    Fallback Method        : Not needed");
                 System.out.println("    Fallback Method Result : -");
-                System.out.println("    Threshold              : " + threshold);
-                status = (count > 5000 ? "WARNING" : "OK");
+                System.out.println("    Threshold              : > 5000 = WARNING");
+                String status = (count > 5000 ? "WARNING" : "OK");
                 System.out.println("    Status                 : " + status + "\n");
                 return count > 5000 ? EXIT_WARNING : EXIT_OK;
             }
@@ -119,11 +116,11 @@ public class SAPSystemMonitor {
             fn.execute(dest);
             int count = fn.getTableParameterList().getTable("DATA").getNumRows();
             System.out.println("    Fallback Method Result : " + count + " locks");
-            System.out.println("    Threshold              : " + threshold);
+            System.out.println("    Threshold              : > 5000 = WARNING");
             System.out.println("    Status                 : OK\n");
         } catch (Exception e) {
             System.out.println("    Fallback Method Result : Failed");
-            System.out.println("    Threshold              : " + threshold);
+            System.out.println("    Threshold              : > 5000 = WARNING");
             System.out.println("    Status                 : SKIPPED\n");
         }
         return EXIT_OK;
@@ -229,12 +226,11 @@ public class SAPSystemMonitor {
         return EXIT_OK;
     }
 
-    // ==================== SM37 (Updated with BP_JOB_SELECT) ====================
+    // ==================== SM37 ====================
     private static int checkJobs(JCoDestination dest) {
         System.out.println(">>> [SM37] Background Jobs (Last 24h)");
         String yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
 
-        // Primary 1: BAPI_XBP_GET_JOB_LIST
         try {
             JCoFunction fn = dest.getRepository().getFunction("BAPI_XBP_GET_JOB_LIST");
             if (fn != null) {
@@ -260,7 +256,6 @@ public class SAPSystemMonitor {
             }
         } catch (Exception ignored) {}
 
-        // Primary 2: BP_JOB_SELECT
         try {
             JCoFunction fn = dest.getRepository().getFunction("BP_JOB_SELECT");
             if (fn != null) {
@@ -286,7 +281,6 @@ public class SAPSystemMonitor {
             }
         } catch (Exception ignored) {}
 
-        // Fallback: RFC_READ_TABLE on TBTCO
         System.out.println("    Primary Method         : BAPI_XBP_GET_JOB_LIST / BP_JOB_SELECT");
         System.out.println("    Primary Method Result  : Not available");
         System.out.println("    Fallback Method        : RFC_READ_TABLE on TBTCO");
@@ -309,7 +303,7 @@ public class SAPSystemMonitor {
         }
     }
 
-    // ==================== ST22 ====================
+    // ==================== ST22 (Improved - prints actual dumps) ====================
     private static int checkDumps(JCoDestination dest) {
         System.out.println(">>> [ST22] Short Dumps");
         String primary = "/SDF/GET_DUMP_LOG";
@@ -320,11 +314,39 @@ public class SAPSystemMonitor {
             if (fn != null) {
                 System.out.println("    Primary Method         : " + primary);
                 fn.execute(dest);
-                System.out.println("    Primary Method Result  : Success");
-                System.out.println("    Fallback Method        : Not needed");
-                System.out.println("    Fallback Method Result : -");
-                System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
-                System.out.println("    Status                 : OK\n");
+
+                JCoTable dumpTable = null;
+                try { dumpTable = fn.getTableParameterList().getTable("ET_DUMPS"); } catch (Exception ignored) {}
+                if (dumpTable == null) try { dumpTable = fn.getTableParameterList().getTable("DUMP_LIST"); } catch (Exception ignored) {}
+                if (dumpTable == null) try { dumpTable = fn.getTableParameterList().getTable("IT_DUMPS"); } catch (Exception ignored) {}
+
+                if (dumpTable != null && dumpTable.getNumRows() > 0) {
+                    System.out.println("    Primary Method Result  : " + dumpTable.getNumRows() + " dumps found");
+                    System.out.println("    Fallback Method        : Not needed");
+                    System.out.println("    Fallback Method Result : -");
+                    System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
+                    System.out.println("    Status                 : OK");
+                    System.out.println("    --------------------------------------------------");
+                    for (int i = 0; i < Math.min(dumpTable.getNumRows(), 15); i++) {
+                        dumpTable.setRow(i);
+                        String datum = safeGet(dumpTable, "DATUM");
+                        String uzeit = safeGet(dumpTable, "UZEIT");
+                        String kword = safeGet(dumpTable, "KWORD1");
+                        String uname = safeGet(dumpTable, "UNAME");
+                        String ahost = safeGet(dumpTable, "AHOST");
+                        System.out.printf("    %s %s | %-25s | %-12s | %s%n", datum, uzeit, kword, uname, ahost);
+                    }
+                    if (dumpTable.getNumRows() > 15) {
+                        System.out.println("    ... (" + (dumpTable.getNumRows() - 15) + " more dumps)");
+                    }
+                    System.out.println("    --------------------------------------------------\n");
+                } else {
+                    System.out.println("    Primary Method Result  : No dumps returned");
+                    System.out.println("    Fallback Method        : Not needed");
+                    System.out.println("    Fallback Method Result : -");
+                    System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
+                    System.out.println("    Status                 : OK\n");
+                }
                 return EXIT_OK;
             }
         } catch (Exception ignored) {}
@@ -351,6 +373,14 @@ public class SAPSystemMonitor {
             System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
             System.out.println("    Status                 : SKIPPED\n");
             return EXIT_OK;
+        }
+    }
+
+    private static String safeGet(JCoTable table, String field) {
+        try {
+            return table.getString(field);
+        } catch (Exception e) {
+            return "-";
         }
     }
 
