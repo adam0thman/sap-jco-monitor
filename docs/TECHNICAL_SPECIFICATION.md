@@ -1,6 +1,6 @@
 # SAP JCo Monitor - Technical Specification
 
-**Version:** 1.3.5  
+**Version:** 1.3.6  
 **Date:** 2026-06-01  
 **Author:** Hermes Agent
 
@@ -31,7 +31,7 @@ Every monitoring check follows this consistent structure:
 
 ---
 
-## 2. Monitoring Checks - Final Implementation (v1.3.5)
+## 2. Monitoring Checks - Final Implementation (v1.3.6)
 
 ### 2.1 SM12 - Lock Entries
 **Primary:** `ENQUEUE_READ`  
@@ -52,10 +52,12 @@ Every monitoring check follows this consistent structure:
 **Threshold:** >= 1 required
 
 ### 2.5 SM37 - Background Jobs (Last 24h)
-**Primary 1:** `BAPI_XBP_GET_JOB_LIST`  
-**Primary 2:** `BP_JOB_SELECT`  
-**Fallback:** `RFC_READ_TABLE` on `TBTCO`  
+**Objective:** count jobs that aborted (status `A`) since yesterday.
+**Primary (A):** `RFC_READ_TABLE` on `TBTCO`, columns trimmed to `JOBNAME, STATUS, SDLSTRTDT, ENDDATE` (avoids the 512-byte buffer limit) with WHERE `STATUS = 'A' AND SDLSTRTDT >= <yesterday>`; the returned row count is the aborted-job count.
+**Fallback (B):** XBP external-monitoring interface over a stateful XMI session — `BAPI_XMI_LOGON` (INTERFACE `XBP`, VERSION `3.0`) → `BAPI_XBP_JOB_SELECT` with `JOB_SELECT_PARAM-ABORTED = 'X'` → `BAPI_XMI_LOGOFF`, wrapped in `JCoContext.begin/end`.
 **Threshold:** > 10 = WARNING
+
+**Note:** TBTCO status values are R=running, Y=ready, P=scheduled, S=released, A=aborted, F=finished, Z=active. Only `A` counts as a failure. The deprecated `BAPI_XBP_GET_JOB_LIST` / non-RFC `BP_JOB_SELECT` were removed; the former is not even present on some releases (e.g. the tested S/4HANA system).
 
 ### 2.6 ST22 - Short Dumps
 **Primary:** `/SDF/GET_DUMP_LOG` (reads from `ET_E2E_LOG`)  
@@ -74,6 +76,7 @@ Every monitoring check follows this consistent structure:
 
 | Version | Changes |
 |---------|---------|
+| 1.3.6   | SM37 redesigned: primary = corrected `TBTCO` read (trimmed columns + `STATUS='A'`/date WHERE, fixes 512-byte buffer overflow and now counts aborted jobs); fallback = XBP `BAPI_XBP_JOB_SELECT` over a stateful `JCoContext` XMI session; dropped dead `BAPI_XBP_GET_JOB_LIST`/`BP_JOB_SELECT` and the bogus `'C'` status. Both paths verified live (agree on count). |
 | 1.3.5   | ST22 primary path now applies WARNING/CRITICAL thresholds (was hardcoded OK); removed dead `safeGet` helper; added `S4D.jcoDestination.template`; README aligned with implemented checks |
 | 1.3.4   | ST22 now dynamically prints all fields from `ET_E2E_LOG` |
 | 1.3.3   | Added `ET_E2E_LOG` support for `/SDF/GET_DUMP_LOG` |
