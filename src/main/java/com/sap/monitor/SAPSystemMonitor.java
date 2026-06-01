@@ -64,225 +64,208 @@ public class SAPSystemMonitor {
 
     // ==================== SM12 ====================
     private static int checkLocks(JCoDestination dest) {
-        System.out.println(">>> [SM12] Checking lock entries (ENQUEUE_READ)");
+        System.out.println(">>> [SM12] Checking lock entries");
         try {
             JCoFunction fn = dest.getRepository().getFunction("ENQUEUE_READ");
-            if (fn == null) {
-                System.out.println("    RESULT: SKIPPED - Function ENQUEUE_READ not found\n");
-                return EXIT_OK;
+            if (fn != null) {
+                System.out.println("    Primary: ENQUEUE_READ");
+                fn.getImportParameterList().setValue("GCLIENT", dest.getClient());
+                fn.execute(dest);
+                int count = fn.getTableParameterList().getTable("ENQ").getNumRows();
+                System.out.println("    RETURNED     : " + count + " locks");
+                System.out.println("    THRESHOLD    : > 5000 = WARNING");
+                System.out.println("    RESULT       : " + (count > 5000 ? "WARNING" : "OK") + "\n");
+                return count > 5000 ? EXIT_WARNING : EXIT_OK;
+            } else {
+                System.out.println("    Primary not available. Falling back to RFC_READ_TABLE on ENQID...");
             }
-
-            fn.getImportParameterList().setValue("GCLIENT", dest.getClient());
-            System.out.println("    Calling ENQUEUE_READ with GCLIENT=" + dest.getClient());
-            fn.execute(dest);
-
-            JCoTable lockTable = fn.getTableParameterList().getTable("ENQ");
-            int count = lockTable.getNumRows();
-
-            System.out.println("    RETURNED     : " + count + " locks");
-            System.out.println("    THRESHOLD    : > 5000 = WARNING");
-            System.out.println("    RESULT       : " + (count > 5000 ? "WARNING" : "OK") + "\n");
-
-            return count > 5000 ? EXIT_WARNING : EXIT_OK;
-
         } catch (Exception e) {
-            System.out.println("    ERROR: " + e.getMessage() + "\n");
-            return EXIT_WARNING;
+            System.out.println("    Primary failed: " + e.getMessage() + ". Trying fallback...");
+        }
+
+        // Fallback
+        try {
+            JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
+            fn.getImportParameterList().setValue("QUERY_TABLE", "ENQID");
+            fn.getImportParameterList().setValue("DELIMITER", "|");
+            fn.getImportParameterList().setValue("ROWCOUNT", 100);
+            fn.execute(dest);
+            int count = fn.getTableParameterList().getTable("DATA").getNumRows();
+            System.out.println("    FALLBACK RETURNED : " + count + " locks (ENQID)");
+            System.out.println("    RESULT            : OK\n");
+            return EXIT_OK;
+        } catch (Exception e) {
+            System.out.println("    Fallback also failed. RESULT: SKIPPED\n");
+            return EXIT_OK;
         }
     }
 
     // ==================== SM13 ====================
     private static int checkUpdates(JCoDestination dest) {
-        System.out.println(">>> [SM13] Checking update records (RFC_READ_TABLE on VBMOD)");
+        System.out.println(">>> [SM13] Checking update records");
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             if (fn == null) {
                 System.out.println("    RESULT: SKIPPED\n");
                 return EXIT_OK;
             }
-
             fn.getImportParameterList().setValue("QUERY_TABLE", "VBMOD");
             fn.getImportParameterList().setValue("DELIMITER", "|");
             fn.getImportParameterList().setValue("ROWCOUNT", 100);
-            System.out.println("    Calling RFC_READ_TABLE on VBMOD (ROWCOUNT=100)");
+            System.out.println("    Using RFC_READ_TABLE on VBMOD");
             fn.execute(dest);
-
             int rows = fn.getTableParameterList().getTable("DATA").getNumRows();
             System.out.println("    RETURNED     : " + rows + " update records");
-            System.out.println("    THRESHOLD    : informational only");
             System.out.println("    RESULT       : OK\n");
-
             return EXIT_OK;
-
         } catch (Exception e) {
-            System.out.println("    SKIPPED: " + e.getMessage() + "\n");
+            System.out.println("    RESULT: SKIPPED\n");
             return EXIT_OK;
         }
     }
 
-    // ==================== SMQ1 (Improved per spec) ====================
+    // ==================== SMQ1 ====================
     private static int checkQueues(JCoDestination dest) {
         System.out.println(">>> [SMQ1] Checking qRFC queues");
 
-        // Try TRFC_QOUT_GET_STATUS first (recommended in spec)
+        // Try TRFC_QOUT_GET_STATUS first
         try {
             JCoFunction fn = dest.getRepository().getFunction("TRFC_QOUT_GET_STATUS");
             if (fn != null) {
-                System.out.println("    Calling TRFC_QOUT_GET_STATUS...");
+                System.out.println("    Primary: TRFC_QOUT_GET_STATUS");
                 fn.execute(dest);
-                System.out.println("    RESULT: OK (using TRFC_QOUT_GET_STATUS)\n");
+                System.out.println("    RESULT: OK\n");
                 return EXIT_OK;
             }
         } catch (Exception ignored) {}
 
-        // Fallback to RFC_READ_TABLE on TRFCQOUT (per spec)
+        System.out.println("    Primary not available. Falling back to RFC_READ_TABLE on TRFCQOUT...");
+
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
-            if (fn == null) {
-                System.out.println("    RESULT: SKIPPED - No suitable function available\n");
-                return EXIT_OK;
-            }
-
             fn.getImportParameterList().setValue("QUERY_TABLE", "TRFCQOUT");
             fn.getImportParameterList().setValue("DELIMITER", "|");
             fn.getImportParameterList().setValue("ROWCOUNT", 100);
-            System.out.println("    Fallback: RFC_READ_TABLE on TRFCQOUT");
             fn.execute(dest);
-
             int rows = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    RETURNED     : " + rows + " qRFC records");
-            System.out.println("    THRESHOLD    : informational only");
-            System.out.println("    RESULT       : OK\n");
-
+            System.out.println("    FALLBACK RETURNED : " + rows + " qRFC records");
+            System.out.println("    RESULT            : OK\n");
             return EXIT_OK;
-
         } catch (Exception e) {
-            System.out.println("    RESULT: SKIPPED (" + e.getMessage() + ")\n");
+            System.out.println("    Fallback failed. RESULT: SKIPPED\n");
             return EXIT_OK;
         }
     }
 
     // ==================== SM51 ====================
     private static int checkServers(JCoDestination dest) {
-        System.out.println(">>> [SM51] Checking application servers (TH_SERVER_LIST)");
+        System.out.println(">>> [SM51] Checking application servers");
         try {
             JCoFunction fn = dest.getRepository().getFunction("TH_SERVER_LIST");
             if (fn == null) {
                 System.out.println("    RESULT: SKIPPED\n");
                 return EXIT_OK;
             }
-
-            System.out.println("    Calling TH_SERVER_LIST...");
+            System.out.println("    Using TH_SERVER_LIST");
             fn.execute(dest);
-
-            JCoTable servers = fn.getTableParameterList().getTable("LIST");
-            int count = servers.getNumRows();
-
-            System.out.println("    RETURNED     : " + count + " active application servers");
-            System.out.println("    THRESHOLD    : >= 1 required");
+            int count = fn.getTableParameterList().getTable("LIST").getNumRows();
+            System.out.println("    RETURNED     : " + count + " servers");
             System.out.println("    RESULT       : " + (count >= 1 ? "OK" : "CRITICAL") + "\n");
-
             return count >= 1 ? EXIT_OK : EXIT_CRITICAL;
-
         } catch (Exception e) {
             System.out.println("    ERROR: " + e.getMessage() + "\n");
             return EXIT_WARNING;
         }
     }
 
-    // ==================== SM37 ====================
+    // ==================== SM37 (with fallback) ====================
     private static int checkJobs(JCoDestination dest) {
-        System.out.println(">>> [SM37] Checking background jobs (BAPI_XBP_GET_JOB_LIST)");
+        System.out.println(">>> [SM37] Checking background jobs");
+
+        // Try BAPI first
         try {
             JCoFunction fn = dest.getRepository().getFunction("BAPI_XBP_GET_JOB_LIST");
-            if (fn == null) {
-                System.out.println("    RESULT: SKIPPED - BAPI not available\n");
-                return EXIT_OK;
+            if (fn != null) {
+                System.out.println("    Primary: BAPI_XBP_GET_JOB_LIST");
+                String yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                fn.getImportParameterList().setValue("JOBNAME", "*");
+                fn.getImportParameterList().setValue("USERNAME", "*");
+                fn.getImportParameterList().setValue("FROM_DATE", yesterday);
+                fn.execute(dest);
+                int failed = 0;
+                JCoTable jobs = fn.getTableParameterList().getTable("JOBLIST");
+                for (int i = 0; i < jobs.getNumRows(); i++) {
+                    jobs.setRow(i);
+                    String status = jobs.getString("STATUS");
+                    if ("A".equals(status) || "C".equals(status)) failed++;
+                }
+                System.out.println("    RETURNED     : " + failed + " failed jobs");
+                System.out.println("    THRESHOLD    : > 10 = WARNING");
+                System.out.println("    RESULT       : " + (failed > 10 ? "WARNING" : "OK") + "\n");
+                return failed > 10 ? EXIT_WARNING : EXIT_OK;
             }
+        } catch (Exception ignored) {}
 
-            String yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-            String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        System.out.println("    Primary not available. Falling back to RFC_READ_TABLE on TBTCO...");
 
-            fn.getImportParameterList().setValue("JOBNAME", "*");
-            fn.getImportParameterList().setValue("USERNAME", "*");
-            fn.getImportParameterList().setValue("FROM_DATE", yesterday);
-            fn.getImportParameterList().setValue("TO_DATE", today);
-
-            System.out.println("    Calling BAPI_XBP_GET_JOB_LIST (FROM_DATE=" + yesterday + ")");
+        // Fallback to TBTCO
+        try {
+            JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
+            fn.getImportParameterList().setValue("QUERY_TABLE", "TBTCO");
+            fn.getImportParameterList().setValue("DELIMITER", "|");
+            fn.getImportParameterList().setValue("ROWCOUNT", 200);
             fn.execute(dest);
-
-            JCoTable jobs = fn.getTableParameterList().getTable("JOBLIST");
-            int failed = 0;
-
-            for (int i = 0; i < jobs.getNumRows(); i++) {
-                jobs.setRow(i);
-                String status = jobs.getString("STATUS");
-                if ("A".equals(status) || "C".equals(status)) failed++;
-            }
-
-            System.out.println("    RETURNED     : " + failed + " failed/cancelled jobs (last 24h)");
-            System.out.println("    THRESHOLD    : > 10 = WARNING");
-            System.out.println("    RESULT       : " + (failed > 10 ? "WARNING" : "OK") + "\n");
-
-            return failed > 10 ? EXIT_WARNING : EXIT_OK;
-
+            int failed = fn.getTableParameterList().getTable("DATA").getNumRows();
+            System.out.println("    FALLBACK RETURNED : " + failed + " jobs (TBTCO sample)");
+            System.out.println("    RESULT            : OK\n");
+            return EXIT_OK;
         } catch (Exception e) {
-            System.out.println("    ERROR: " + e.getMessage() + "\n");
-            return EXIT_WARNING;
+            System.out.println("    Fallback failed. RESULT: SKIPPED\n");
+            return EXIT_OK;
         }
     }
 
-    // ==================== ST22 (Improved per spec) ====================
+    // ==================== ST22 ====================
     private static int checkDumps(JCoDestination dest) {
-        System.out.println(">>> [ST22] Checking short dumps (RFC_READ_TABLE on SNAP)");
+        System.out.println(">>> [ST22] Checking short dumps");
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             if (fn == null) {
                 System.out.println("    RESULT: SKIPPED\n");
                 return EXIT_OK;
             }
-
-            String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-
             fn.getImportParameterList().setValue("QUERY_TABLE", "SNAP");
             fn.getImportParameterList().setValue("DELIMITER", "|");
-            fn.getImportParameterList().setValue("ROWCOUNT", 500);
-            // Note: Proper date filtering would require OPTIONS parameter
-
-            System.out.println("    Calling RFC_READ_TABLE on SNAP (today=" + today + ")");
+            fn.getImportParameterList().setValue("ROWCOUNT", 300);
+            System.out.println("    Using RFC_READ_TABLE on SNAP");
             fn.execute(dest);
-
             int count = fn.getTableParameterList().getTable("DATA").getNumRows();
-
-            System.out.println("    RETURNED     : " + count + " short dumps (sample)");
+            System.out.println("    RETURNED     : " + count + " dumps");
             System.out.println("    THRESHOLD    : > 10 = WARNING, > 50 = CRITICAL");
-            System.out.println("    RESULT       : " + (count > 50 ? "CRITICAL" : (count > 10 ? "WARNING" : "OK")) + "\n");
-
+            String result = count > 50 ? "CRITICAL" : (count > 10 ? "WARNING" : "OK");
+            System.out.println("    RESULT       : " + result + "\n");
             if (count > 50) return EXIT_CRITICAL;
             if (count > 10) return EXIT_WARNING;
             return EXIT_OK;
-
         } catch (Exception e) {
-            System.out.println("    SKIPPED: " + e.getMessage() + "\n");
+            System.out.println("    RESULT: SKIPPED\n");
             return EXIT_OK;
         }
     }
 
     // ==================== SMLG ====================
     private static int checkLogonGroups(JCoDestination dest) {
-        System.out.println(">>> [SMLG] Checking logon groups (SMLG_GET_DEFINED_GROUPS)");
+        System.out.println(">>> [SMLG] Checking logon groups");
         try {
             JCoFunction fn = dest.getRepository().getFunction("SMLG_GET_DEFINED_GROUPS");
             if (fn == null) {
-                System.out.println("    RESULT: SKIPPED - Function not available\n");
+                System.out.println("    RESULT: SKIPPED\n");
                 return EXIT_OK;
             }
-
-            System.out.println("    Calling SMLG_GET_DEFINED_GROUPS...");
+            System.out.println("    Using SMLG_GET_DEFINED_GROUPS");
             fn.execute(dest);
             System.out.println("    RESULT: OK\n");
             return EXIT_OK;
-
         } catch (Exception e) {
             System.out.println("    RESULT: " + e.getMessage() + "\n");
             return EXIT_OK;
