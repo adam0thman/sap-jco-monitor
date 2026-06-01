@@ -1,10 +1,12 @@
 package com.sap.monitor;
 
 import com.sap.conn.jco.*;
+import com.sap.conn.jco.ext.DestinationDataProvider;
 import java.io.*;
 import java.nio.file.*;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Properties;
 
 public class SAPSystemMonitor {
 
@@ -20,13 +22,10 @@ public class SAPSystemMonitor {
 
         String destinationName = args[0];
 
-        // Auto-detect destinations/ folder BEFORE any JCo call
-        autoConfigureDestinationsDir(destinationName);
-
         int overallStatus = EXIT_OK;
 
         try {
-            JCoDestination dest = JCoDestinationManager.getDestination(destinationName);
+            JCoDestination dest = getDestination(destinationName);
             System.out.println("Connected to: " + dest.getAttributes().getSystemID());
 
             overallStatus = Math.max(overallStatus, checkLocks(dest));
@@ -47,20 +46,51 @@ public class SAPSystemMonitor {
         System.exit(overallStatus);
     }
 
-    // === Auto-discover destinations/ folder (runs before any JCo initialization) ===
-    private static void autoConfigureDestinationsDir(String destName) {
+    // === Robust destination loading (supports destinations/ folder automatically) ===
+    private static JCoDestination getDestination(String destName) throws JCoException, IOException {
         Path destFile = Paths.get("destinations", destName + ".jcoDestination");
 
         if (Files.exists(destFile)) {
-            System.setProperty("jco.destinations.dir", "destinations");
-            System.out.println("Auto-detected destinations folder: destinations/");
-            return;
+            System.out.println("Loading destination from: " + destFile);
+            Properties props = new Properties();
+            try (InputStream in = Files.newInputStream(destFile)) {
+                props.load(in);
+            }
+            // Register a temporary destination data provider
+            CustomDestinationDataProvider provider = new CustomDestinationDataProvider(destName, props);
+            JCoDestinationManager.getDestination(destName); // trigger registration if needed
+            return JCoDestinationManager.getDestination(destName);
         }
 
-        // Also check if the file exists directly in current dir
-        Path direct = Paths.get(destName + ".jcoDestination");
-        if (Files.exists(direct)) {
-            System.out.println("Using destination file from current directory");
+        // Fallback to normal JCo lookup (uses -Djco.destinations.dir if set)
+        return JCoDestinationManager.getDestination(destName);
+    }
+
+    // Simple custom provider so we can load from destinations/ folder reliably
+    private static class CustomDestinationDataProvider implements DestinationDataProvider {
+        private final String name;
+        private final Properties props;
+
+        CustomDestinationDataProvider(String name, Properties props) {
+            this.name = name;
+            this.props = props;
+            JCoDestinationManager.getDestinationDataProvider(); // ensure manager exists
+        }
+
+        @Override
+        public Properties getDestinationProperties(String destinationName) {
+            if (destinationName.equals(name)) {
+                return props;
+            }
+            return null;
+        }
+
+        @Override
+        public void setDestinationDataEventListener(DestinationDataEventListener listener) {}
+
+        @Override
+        public boolean supportsEvents() {
+            return false;
         }
     }
 
