@@ -1,7 +1,6 @@
 package com.sap.monitor;
 
 import com.sap.conn.jco.*;
-import com.sap.conn.jco.ext.DestinationDataProvider;
 import java.io.*;
 import java.nio.file.*;
 import java.time.LocalDate;
