@@ -45,21 +45,15 @@ public class SAPSystemMonitor {
         System.exit(overallStatus);
     }
 
-    // === Robust destination loading (supports destinations/ folder automatically) ===
-    private static JCoDestination getDestination(String destName) throws JCoException, IOException {
+    // === Simple and reliable destination loading ===
+    private static JCoDestination getDestination(String destName) throws JCoException {
         Path destFile = Paths.get("destinations", destName + ".jcoDestination");
 
         if (Files.exists(destFile)) {
-            System.out.println("Loading destination from: " + destFile);
-            Properties props = new Properties();
-            try (InputStream in = Files.newInputStream(destFile)) {
-                props.load(in);
-            }
-            // Best way in JCo 3.x — pass properties directly
-            return JCoDestinationManager.getDestination(destName, props);
+            System.setProperty("jco.destinations.dir", "destinations");
+            System.out.println("Using destinations from: destinations/");
         }
 
-        // Fallback to normal lookup (uses -Djco.destinations.dir if provided)
         return JCoDestinationManager.getDestination(destName);
     }
 
