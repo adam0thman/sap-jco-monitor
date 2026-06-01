@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.3.3";
+    private static final String VERSION = "1.3.4";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -303,7 +303,7 @@ public class SAPSystemMonitor {
         }
     }
 
-    // ==================== ST22 (Fixed - uses ET_E2E_LOG) ====================
+    // ==================== ST22 (Dynamic field printing from ET_E2E_LOG) ====================
     private static int checkDumps(JCoDestination dest) {
         System.out.println(">>> [ST22] Short Dumps");
         String primary = "/SDF/GET_DUMP_LOG";
@@ -328,17 +328,24 @@ public class SAPSystemMonitor {
                     System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
                     System.out.println("    Status                 : OK");
                     System.out.println("    --------------------------------------------------");
-                    for (int i = 0; i < Math.min(dumpTable.getNumRows(), 15); i++) {
+
+                    // Print all available fields dynamically
+                    JCoRecordMetaData meta = dumpTable.getRecordMetaData();
+                    int fieldCount = meta.getFieldCount();
+
+                    for (int i = 0; i < Math.min(dumpTable.getNumRows(), 10); i++) {
                         dumpTable.setRow(i);
-                        String datum = safeGet(dumpTable, "DATUM");
-                        String uzeit = safeGet(dumpTable, "UZEIT");
-                        String kword = safeGet(dumpTable, "KWORD1");
-                        String uname = safeGet(dumpTable, "UNAME");
-                        String ahost = safeGet(dumpTable, "AHOST");
-                        System.out.printf("    %s %s | %-25s | %-12s | %s%n", datum, uzeit, kword, uname, ahost);
+                        StringBuilder line = new StringBuilder("    ");
+                        for (int f = 0; f < fieldCount; f++) {
+                            String fieldName = meta.getName(f);
+                            String value = "-";
+                            try { value = dumpTable.getString(fieldName); } catch (Exception ignored) {}
+                            line.append(fieldName).append("=").append(value).append(" | ");
+                        }
+                        System.out.println(line.toString());
                     }
-                    if (dumpTable.getNumRows() > 15) {
-                        System.out.println("    ... (" + (dumpTable.getNumRows() - 15) + " more dumps)");
+                    if (dumpTable.getNumRows() > 10) {
+                        System.out.println("    ... (" + (dumpTable.getNumRows() - 10) + " more)");
                     }
                     System.out.println("    --------------------------------------------------\n");
                 } else {
