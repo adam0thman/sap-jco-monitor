@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.2.2";
+    private static final String VERSION = "1.2.3";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -237,7 +237,7 @@ public class SAPSystemMonitor {
         }
     }
 
-    // ==================== ST22 (Fixed - now tries /SDF/GET_DUMP_LOG first) ====================
+    // ==================== ST22 (Improved - lists actual dumps) ====================
     private static int checkDumps(JCoDestination dest) {
         System.out.println(">>> [ST22] Short Dumps");
 
@@ -247,9 +247,39 @@ public class SAPSystemMonitor {
             if (fn != null) {
                 System.out.println("    Method : /SDF/GET_DUMP_LOG");
                 fn.execute(dest);
-                // Note: Actual field extraction would depend on the structure returned
-                System.out.println("    Value  : Dumps retrieved via /SDF/GET_DUMP_LOG");
-                System.out.println("    Status : OK\n");
+
+                // Try common table parameter names returned by this FM
+                JCoTable dumpTable = null;
+                try { dumpTable = fn.getTableParameterList().getTable("ET_DUMPS"); } catch (Exception ignored) {}
+                if (dumpTable == null) {
+                    try { dumpTable = fn.getTableParameterList().getTable("DUMP_LIST"); } catch (Exception ignored) {}
+                }
+                if (dumpTable == null) {
+                    try { dumpTable = fn.getTableParameterList().getTable("IT_DUMPS"); } catch (Exception ignored) {}
+                }
+
+                if (dumpTable != null && dumpTable.getNumRows() > 0) {
+                    System.out.println("    Dumps found: " + dumpTable.getNumRows());
+                    System.out.println("    --------------------------------------------------");
+                    for (int i = 0; i < Math.min(dumpTable.getNumRows(), 10); i++) {
+                        dumpTable.setRow(i);
+                        String datum   = safeGet(dumpTable, "DATUM");
+                        String uzeit   = safeGet(dumpTable, "UZEIT");
+                        String kword   = safeGet(dumpTable, "KWORD1");
+                        String uname   = safeGet(dumpTable, "UNAME");
+                        String ahost   = safeGet(dumpTable, "AHOST");
+                        System.out.printf("    %s %s | %-25s | %-12s | %s%n",
+                                datum, uzeit, kword, uname, ahost);
+                    }
+                    if (dumpTable.getNumRows() > 10) {
+                        System.out.println("    ... (" + (dumpTable.getNumRows() - 10) + " more)");
+                    }
+                    System.out.println("    --------------------------------------------------");
+                    System.out.println("    Status : OK\n");
+                } else {
+                    System.out.println("    Value  : No dumps returned");
+                    System.out.println("    Status : OK\n");
+                }
                 return EXIT_OK;
             } else {
                 System.out.println("    Primary (/SDF/GET_DUMP_LOG) not available. Falling back to RFC_READ_TABLE on SNAP...");
@@ -273,7 +303,7 @@ public class SAPSystemMonitor {
             fn.execute(dest);
 
             int count = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    Value  : " + count + " dumps");
+            System.out.println("    Value  : " + count + " dumps (raw table rows)");
             System.out.println("    Limits : 10 (Warning), 50 (Critical)");
             String result = count > 50 ? "CRITICAL" : (count > 10 ? "WARNING" : "OK");
             System.out.println("    Status : " + result + "\n");
@@ -286,6 +316,15 @@ public class SAPSystemMonitor {
             System.out.println("    Fallback failed: " + e.getMessage());
             System.out.println("    Status: SKIPPED\n");
             return EXIT_OK;
+        }
+    }
+
+    // Helper to safely read a field from a table
+    private static String safeGet(JCoTable table, String field) {
+        try {
+            return table.getString(field);
+        } catch (Exception e) {
+            return "-";
         }
     }
 
