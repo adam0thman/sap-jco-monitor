@@ -1,6 +1,6 @@
 # SAP JCo Monitor - Technical Specification
 
-**Version:** 1.3.6  
+**Version:** 1.3.7  
 **Date:** 2026-06-01  
 **Author:** Hermes Agent
 
@@ -31,7 +31,7 @@ Every monitoring check follows this consistent structure:
 
 ---
 
-## 2. Monitoring Checks - Final Implementation (v1.3.6)
+## 2. Monitoring Checks - Final Implementation (v1.3.7)
 
 ### 2.1 SM12 - Lock Entries
 **Primary:** `ENQUEUE_READ`  
@@ -66,9 +66,12 @@ Every monitoring check follows this consistent structure:
 
 **Note:** The script dynamically prints all available fields from `ET_E2E_LOG`.
 
-### 2.7 SMLG - Logon Groups
-**Primary:** `SMLG_GET_DEFINED_GROUPS`  
-**Threshold:** Informational only
+### 2.7 SMLG - Logon Group Response Times
+**Objective:** measure each application server's average DIALOG response time (ms).
+**Method:** `SWNC_COLLECTOR_GET_AGGREGATES` (the ST03 workload collector) returns response times in ms per component (= app server). Average per dialog step = `RESPTI / COUNT` for task type `'01'` (DIALOG). App servers are enumerated via `TH_SERVER_LIST`. The collector aggregates per day and the current day is usually not yet aggregated, so for each server the most recent day with data within a 14-day lookback is used.
+**Threshold:** > 4000 ms on any server = WARNING.
+
+**Note:** This is the ST03 aggregated dialog response time (the standard SAP response-time metric), not a real-time sample — true real-time per-server load-distribution figures from the message server are not reliably exposed over RFC on the tested release.
 
 ---
 
@@ -76,6 +79,7 @@ Every monitoring check follows this consistent structure:
 
 | Version | Changes |
 |---------|---------|
+| 1.3.7   | SMLG implemented as per-app-server DIALOG response-time check via `SWNC_COLLECTOR_GET_AGGREGATES` (ST03), avg ms = `RESPTI/COUNT` for task type `'01'`, most-recent-day-with-data over a 14-day lookback, servers from `TH_SERVER_LIST`; > 4000 ms = WARNING. Replaces the prior informational logon-group listing. ST22 fallback fixed: single `Primary Method` header (no duplicate when `/SDF/GET_DUMP_LOG` exists but errors) and the `SNAP` read now selects only key fields with a 24h `DATUM` filter, counting DISTINCT dumps (avoids the 512-byte buffer overflow that made the fallback fail). |
 | 1.3.6   | SM37 redesigned: primary = corrected `TBTCO` read (trimmed columns + `STATUS='A'`/date WHERE, fixes 512-byte buffer overflow and now counts aborted jobs); fallback = XBP `BAPI_XBP_JOB_SELECT` over a stateful `JCoContext` XMI session; dropped dead `BAPI_XBP_GET_JOB_LIST`/`BP_JOB_SELECT` and the bogus `'C'` status. Both paths verified live (agree on count). |
 | 1.3.5   | ST22 primary path now applies WARNING/CRITICAL thresholds (was hardcoded OK); removed dead `safeGet` helper; added `S4D.jcoDestination.template`; README aligned with implemented checks |
 | 1.3.4   | ST22 now dynamically prints all fields from `ET_E2E_LOG` |

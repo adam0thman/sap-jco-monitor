@@ -6,14 +6,20 @@ import java.nio.file.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
 import java.util.Properties;
+import java.util.Set;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.3.6";
+    private static final String VERSION = "1.3.7";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
+
+    // SMLG response-time check (SWNC/ST03 dialog response time per app server)
+    private static final double RESPTIME_WARN_MS = 4000;
+    private static final int RESPTIME_LOOKBACK_DAYS = 14;
 
     public static void main(String[] args) {
         if (args.length < 1) {
@@ -339,12 +345,12 @@ public class SAPSystemMonitor {
     private static int checkDumps(JCoDestination dest) {
         System.out.println(">>> [ST22] Short Dumps");
         String primary = "/SDF/GET_DUMP_LOG";
-        String fallback = "RFC_READ_TABLE on SNAP";
+        String fallback = "RFC_READ_TABLE on SNAP (last 24h, distinct dumps)";
 
+        System.out.println("    Primary Method         : " + primary);
         try {
             JCoFunction fn = dest.getRepository().getFunction("/SDF/GET_DUMP_LOG");
             if (fn != null) {
-                System.out.println("    Primary Method         : " + primary);
                 fn.execute(dest);
 
                 JCoTable dumpTable = null;
@@ -397,17 +403,32 @@ public class SAPSystemMonitor {
             }
         } catch (Exception ignored) {}
 
-        System.out.println("    Primary Method         : " + primary);
         System.out.println("    Primary Method Result  : Not available");
         System.out.println("    Fallback Method        : " + fallback);
         try {
+            String fromDate = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             fn.getImportParameterList().setValue("QUERY_TABLE", "SNAP");
             fn.getImportParameterList().setValue("DELIMITER", "|");
-            fn.getImportParameterList().setValue("ROWCOUNT", 300);
+            // SNAP is a wide table and a single dump spans many rows; select only the key fields
+            // (stays under the 512-byte RFC_READ_TABLE buffer) and count DISTINCT dumps in the window.
+            JCoTable fields = fn.getTableParameterList().getTable("FIELDS");
+            for (String f : new String[] {"DATUM", "UZEIT", "AHOST", "UNAME"}) {
+                fields.appendRow();
+                fields.setValue("FIELDNAME", f);
+            }
+            JCoTable options = fn.getTableParameterList().getTable("OPTIONS");
+            options.appendRow();
+            options.setValue("TEXT", "DATUM >= '" + fromDate + "'");
             fn.execute(dest);
-            int count = fn.getTableParameterList().getTable("DATA").getNumRows();
-            System.out.println("    Fallback Method Result : " + count + " dumps");
+            JCoTable data = fn.getTableParameterList().getTable("DATA");
+            Set<String> dumps = new HashSet<>();
+            for (int i = 0; i < data.getNumRows(); i++) {
+                data.setRow(i);
+                dumps.add(data.getString("WA"));
+            }
+            int count = dumps.size();
+            System.out.println("    Fallback Method Result : " + count + " dumps (since " + fromDate + ")");
             System.out.println("    Threshold              : > 10 = WARNING, > 50 = CRITICAL");
             String status = count > 50 ? "CRITICAL" : (count > 10 ? "WARNING" : "OK");
             System.out.println("    Status                 : " + status + "\n");
@@ -423,29 +444,83 @@ public class SAPSystemMonitor {
     }
 
     // ==================== SMLG ====================
+    // Objective: measure each application server's average DIALOG response time (ms);
+    //            > 4000 ms on any server is a WARNING.
+    // Source: SWNC_COLLECTOR_GET_AGGREGATES (the ST03 workload collector) gives response
+    // times in ms per component (= app server). Average per dialog step = RESPTI / COUNT for
+    // task type '01' (DIALOG). The collector aggregates per day and "today" is usually not yet
+    // aggregated, so for each server we use the most recent day with data within a lookback
+    // window. App servers come from TH_SERVER_LIST (same source as SM51).
     private static int checkLogonGroups(JCoDestination dest) {
-        System.out.println(">>> [SMLG] Logon Groups");
-        String primary = "SMLG_GET_DEFINED_GROUPS";
-        System.out.println("    Primary Method         : " + primary);
+        System.out.println(">>> [SMLG] Logon Group Response Times");
+        System.out.println("    Primary Method         : SWNC_COLLECTOR_GET_AGGREGATES (DIALOG, per app server)");
         try {
-            JCoFunction fn = dest.getRepository().getFunction("SMLG_GET_DEFINED_GROUPS");
-            if (fn != null) {
-                fn.execute(dest);
-                System.out.println("    Primary Method Result  : Success");
-                System.out.println("    Fallback Method        : Not needed");
-                System.out.println("    Fallback Method Result : -");
-                System.out.println("    Threshold              : informational only");
-                System.out.println("    Status                 : OK\n");
-                return EXIT_OK;
+            String sid = dest.getAttributes().getSystemID();
+            JCoFunction sl = dest.getRepository().getFunction("TH_SERVER_LIST");
+            sl.execute(dest);
+            JCoTable servers = sl.getTableParameterList().getTable("LIST");
+
+            int worst = EXIT_OK, measured = 0;
+            StringBuilder detail = new StringBuilder();
+            for (int s = 0; s < servers.getNumRows(); s++) {
+                servers.setRow(s);
+                String server = servers.getString("NAME");
+                double[] r = dialogAvgMs(dest, sid, server);   // {avgMs, daysAgo} or null
+                if (r == null) {
+                    detail.append("      ").append(server).append(" : no dialog workload data (last ")
+                          .append(RESPTIME_LOOKBACK_DAYS).append(" days)\n");
+                    continue;
+                }
+                measured++;
+                int st = r[0] > RESPTIME_WARN_MS ? EXIT_WARNING : EXIT_OK;
+                worst = Math.max(worst, st);
+                detail.append(String.format("      %s : %.0f ms  (DIALOG, %d day(s) ago)  -> %s%n",
+                        server, r[0], (long) r[1], st == EXIT_WARNING ? "WARNING" : "OK"));
             }
+
+            System.out.println("    Primary Method Result  : " + measured + " of " + servers.getNumRows()
+                    + " server(s) had dialog data");
+            System.out.println("    Fallback Method        : Not needed");
+            System.out.println("    Fallback Method Result : -");
+            System.out.println("    Threshold              : > " + (int) RESPTIME_WARN_MS + " ms = WARNING");
+            System.out.println("    Status                 : " + (worst == EXIT_WARNING ? "WARNING" : "OK"));
+            System.out.print(detail);
+            System.out.println();
+            return worst;
         } catch (Exception e) {
-            System.out.println("    Primary Method Result  : Failed");
+            System.out.println("    Primary Method Result  : Not available");
+            System.out.println("    Fallback Method        : Not available");
+            System.out.println("    Fallback Method Result : -");
+            System.out.println("    Threshold              : > " + (int) RESPTIME_WARN_MS + " ms = WARNING");
+            System.out.println("    Status                 : SKIPPED\n");
+            return EXIT_OK;
         }
-        System.out.println("    Fallback Method        : Not available");
-        System.out.println("    Fallback Method Result : -");
-        System.out.println("    Threshold              : informational only");
-        System.out.println("    Status                 : SKIPPED\n");
-        return EXIT_OK;
+    }
+
+    // Most recent day (within the lookback window) that has DIALOG ('01') workload for the given
+    // server; returns {avg ms per dialog step, days ago} or null if no dialog data was collected.
+    private static double[] dialogAvgMs(JCoDestination dest, String sid, String server) {
+        DateTimeFormatter ymd = DateTimeFormatter.ofPattern("yyyyMMdd");
+        for (int d = 0; d <= RESPTIME_LOOKBACK_DAYS; d++) {
+            try {
+                JCoFunction fn = dest.getRepository().getFunction("SWNC_COLLECTOR_GET_AGGREGATES");
+                fn.getImportParameterList().setValue("COMPONENT", server);
+                fn.getImportParameterList().setValue("ASSIGNDSYS", sid);
+                fn.getImportParameterList().setValue("PERIODTYPE", "D");
+                fn.getImportParameterList().setValue("PERIODSTRT", LocalDate.now().minusDays(d).format(ymd));
+                fn.getImportParameterList().setValue("SUMMARY_ONLY", "X");
+                fn.execute(dest);
+                JCoTable t = fn.getTableParameterList().getTable("TASKTYPE");
+                for (int i = 0; i < t.getNumRows(); i++) {
+                    t.setRow(i);
+                    if ("01".equals(t.getString("TASKTYPE"))) {
+                        long count = t.getLong("COUNT");
+                        if (count > 0) return new double[] {t.getDouble("RESPTI") / count, d};
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return null;
     }
 
     private static String getStatusText(int code) {

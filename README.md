@@ -12,7 +12,7 @@ Automated RFC-based monitoring for S/4HANA, BW, and ECC systems covering:
 - Application server status (SM51)
 - Background jobs (SM37)
 - Short dumps (ST22)
-- Logon groups (SMLG)
+- Logon group response times (SMLG)
 
 Exit codes: 0=OK, 1=Warning, 2=Critical (ideal for cron + alerting)
 
