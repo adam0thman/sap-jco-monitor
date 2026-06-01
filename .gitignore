@@ -1,0 +1,16 @@
+# Compiled
+*.class
+out/
+target/
+
+# JCo native libs and real credentials
+lib/*.so
+lib/*.dll
+lib/*.jnilib
+destinations/*.jcoDestination
+!destinations/*.template
+
+# IDE
+.idea/
+*.iml
+.vscode/
