@@ -56,42 +56,12 @@ public class SAPSystemMonitor {
             try (InputStream in = Files.newInputStream(destFile)) {
                 props.load(in);
             }
-            // Register a temporary destination data provider
-            CustomDestinationDataProvider provider = new CustomDestinationDataProvider(destName, props);
-            JCoDestinationManager.getDestination(destName); // trigger registration if needed
-            return JCoDestinationManager.getDestination(destName);
+            // Best way in JCo 3.x — pass properties directly
+            return JCoDestinationManager.getDestination(destName, props);
         }
 
-        // Fallback to normal JCo lookup (uses -Djco.destinations.dir if set)
+        // Fallback to normal lookup (uses -Djco.destinations.dir if provided)
         return JCoDestinationManager.getDestination(destName);
-    }
-
-    // Simple custom provider so we can load from destinations/ folder reliably
-    private static class CustomDestinationDataProvider implements DestinationDataProvider {
-        private final String name;
-        private final Properties props;
-
-        CustomDestinationDataProvider(String name, Properties props) {
-            this.name = name;
-            this.props = props;
-            JCoDestinationManager.getDestinationDataProvider(); // ensure manager exists
-        }
-
-        @Override
-        public Properties getDestinationProperties(String destinationName) {
-            if (destinationName.equals(name)) {
-                return props;
-            }
-            return null;
-        }
-
-        @Override
-        public void setDestinationDataEventListener(DestinationDataEventListener listener) {}
-
-        @Override
-        public boolean supportsEvents() {
-            return false;
-        }
     }
 
     // === Real monitoring checks ===
