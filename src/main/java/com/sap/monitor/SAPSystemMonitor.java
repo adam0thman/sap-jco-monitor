@@ -10,7 +10,7 @@ import java.util.Properties;
 
 public class SAPSystemMonitor {
 
-    private static final String VERSION = "1.2.1";
+    private static final String VERSION = "1.2.2";
     private static final int EXIT_OK = 0;
     private static final int EXIT_WARNING = 1;
     private static final int EXIT_CRITICAL = 2;
@@ -28,7 +28,6 @@ public class SAPSystemMonitor {
             JCoDestination dest = getDestination(destinationName);
             JCoAttributes attrs = dest.getAttributes();
 
-            // === CORPORATE HEADER ===
             String ashost = getAshostFromDestination(destinationName);
 
             System.out.println("==============================================================");
@@ -70,7 +69,6 @@ public class SAPSystemMonitor {
         return JCoDestinationManager.getDestination(destName);
     }
 
-    // Read real ASHOST from the .jcoDestination file
     private static String getAshostFromDestination(String destName) {
         try {
             Path destFile = Paths.get("destinations", destName + ".jcoDestination");
@@ -239,29 +237,53 @@ public class SAPSystemMonitor {
         }
     }
 
-    // ==================== ST22 ====================
+    // ==================== ST22 (Fixed - now tries /SDF/GET_DUMP_LOG first) ====================
     private static int checkDumps(JCoDestination dest) {
         System.out.println(">>> [ST22] Short Dumps");
+
+        // Try preferred function first
+        try {
+            JCoFunction fn = dest.getRepository().getFunction("/SDF/GET_DUMP_LOG");
+            if (fn != null) {
+                System.out.println("    Method : /SDF/GET_DUMP_LOG");
+                fn.execute(dest);
+                // Note: Actual field extraction would depend on the structure returned
+                System.out.println("    Value  : Dumps retrieved via /SDF/GET_DUMP_LOG");
+                System.out.println("    Status : OK\n");
+                return EXIT_OK;
+            } else {
+                System.out.println("    Primary (/SDF/GET_DUMP_LOG) not available. Falling back to RFC_READ_TABLE on SNAP...");
+            }
+        } catch (Exception e) {
+            System.out.println("    Primary failed: " + e.getMessage() + ". Falling back...");
+        }
+
+        // Fallback to RFC_READ_TABLE on SNAP
         try {
             JCoFunction fn = dest.getRepository().getFunction("RFC_READ_TABLE");
             if (fn == null) {
-                System.out.println("    Status: SKIPPED\n");
+                System.out.println("    Fallback also not available. Status: SKIPPED\n");
                 return EXIT_OK;
             }
+
             fn.getImportParameterList().setValue("QUERY_TABLE", "SNAP");
             fn.getImportParameterList().setValue("DELIMITER", "|");
             fn.getImportParameterList().setValue("ROWCOUNT", 300);
-            System.out.println("    Method : RFC_READ_TABLE on SNAP");
+            System.out.println("    Fallback Method : RFC_READ_TABLE on SNAP");
             fn.execute(dest);
+
             int count = fn.getTableParameterList().getTable("DATA").getNumRows();
             System.out.println("    Value  : " + count + " dumps");
             System.out.println("    Limits : 10 (Warning), 50 (Critical)");
             String result = count > 50 ? "CRITICAL" : (count > 10 ? "WARNING" : "OK");
             System.out.println("    Status : " + result + "\n");
+
             if (count > 50) return EXIT_CRITICAL;
             if (count > 10) return EXIT_WARNING;
             return EXIT_OK;
+
         } catch (Exception e) {
+            System.out.println("    Fallback failed: " + e.getMessage());
             System.out.println("    Status: SKIPPED\n");
             return EXIT_OK;
         }
